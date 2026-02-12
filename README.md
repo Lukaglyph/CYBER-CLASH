@@ -1,4 +1,4 @@
-🚀 CYBER CLASH
+🚀 CYBER CLASH: SURVIVAL
 ネオン煌めくサイバー空間を舞台にした、ブラウザベースのローグライク・全方位シューティングゲームです。迫りくる敵の弾幕を相殺し、経験値を集めて機体を究極まで進化させましょう。
 
 ✨ 主な機能
@@ -39,7 +39,8 @@ UI Design: CSS Neon Glow Effects & Flexbox
 🚀 セットアップ
 このプロジェクトは外部ライブラリを使用していないため、特別なインストールは不要です。
 
+https://lukaglyph.github.io/CYBER-CLASH/
 をブラウザで開くだけでプレイ可能です。
 
-ライセンス
+📄 ライセンス
 This project is licensed under the MIT License
