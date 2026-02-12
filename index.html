@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CYBER CLASH</title>
+    <style>
+        :root {
+            --neon-blue: #00f3ff;
+            --neon-pink: #ff00ff;
+            --neon-green: #00ff9d;
+            --bg-black: #050505;
+        }
+        body {
+            background-color: var(--bg-black);
+            color: white;
+            font-family: 'Share Tech Mono', 'Meiryo', sans-serif;
+            margin: 0; padding: 0; overflow: hidden;
+            touch-action: none; user-select: none;
+        }
+        #game-wrapper { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        #mobile-header {
+            height: 60px; width: 100%;
+            background: rgba(10, 10, 20, 0.9);
+            border-bottom: 1px solid var(--neon-blue);
+            display: flex; justify-content: space-around; align-items: center;
+            font-size: 14px; z-index: 10;
+        }
+        .stat-group { text-align: center; }
+        .stat-label { color: var(--neon-blue); font-size: 10px; margin-bottom: 2px; }
+        .stat-value { font-weight: bold; text-shadow: 0 0 5px var(--neon-blue); }
+        #boss-hp-container { position: absolute; top: 60px; left: 0; width: 100%; height: 6px; background: #300; z-index: 5; }
+        #boss-hp-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #f0f, #a0a); box-shadow: 0 0 10px #f0f; transition: width 0.1s linear; }
+        canvas { flex-grow: 1; background: #000; width: 100%; height: calc(100% - 60px); display: block; }
+        #xp-bar-outer { position: absolute; bottom: 0; width: 100%; height: 6px; background: #111; }
+        #xp-fill { width: 0%; height: 100%; background: var(--neon-blue); box-shadow: 0 0 10px var(--neon-blue); transition: width 0.2s; }
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; text-align: center; }
+        .btn { padding: 15px 30px; background: transparent; color: var(--neon-blue); border: 2px solid var(--neon-blue); border-radius: 30px; font-size: 18px; cursor: pointer; margin-top: 20px;}
+        .upgrade-card { width: 85%; max-width: 320px; background: rgba(20,20,40,0.9); border: 1px solid var(--neon-green); margin: 8px; padding: 15px; border-radius: 12px; text-align: left; cursor: pointer; }
+        #active-skills-list { position: absolute; bottom: 15px; left: 10px; font-size: 10px; color: var(--neon-green); pointer-events: none; opacity: 0.8; }
+        .highlight { color: var(--neon-blue); font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div id="mobile-header">
+        <div class="stat-group"><div class="stat-label">TIME</div><div id="time-val" class="stat-value">00:00</div></div>
+        <div class="stat-group"><div class="stat-label">RANK</div><div id="lv-val" class="stat-value">1</div></div>
+        <div class="stat-group"><div class="stat-label">HP</div><div id="hp-val" class="stat-value" style="color:var(--neon-pink)">10/10</div></div>
+    </div>
+    <div id="boss-hp-container"><div id="boss-hp-fill"></div></div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="active-skills-list"></div>
+    <div id="xp-bar-outer"><div id="xp-fill"></div></div>
+
+    <div id="start-overlay" class="overlay">
+        <h1 style="color:var(--neon-blue);">CYBER CLASH</h1>
+        <button class="btn" onclick="startGame()">START SYSTEM</button>
+    </div>
+
+    <div id="level-up-overlay" class="overlay" style="display:none;">
+        <h2 style="color:var(--neon-green)">RANK UP</h2>
+        <div id="upgrade-choices"></div>
+    </div>
+
+    <div id="game-over-overlay" class="overlay" style="display:none;">
+        <h1 style="color:var(--neon-pink)">SYSTEM HALTED</h1>
+        <div style="font-size:24px;">SURVIVED: <span id="final-time" class="highlight">00:00</span></div>
+        <button class="btn" onclick="location.reload()">REBOOT</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let gameActive = false, frame = 0, wave = 1, spiralAngle = 0;
+    
+    let player = { x: 0, y: 0, hp: 10, maxHp: 10, lv: 1, xp: 0, nextXp: 50, invul: 0 };
+    let enemy = { x: 0, y: 0, targetX: 0, targetY: 0, moveTimer: 0, hp: 600, maxHp: 600, isExploding: false };
+    
+    let bullets = [], enemyBullets = [], expOrbs = [], pulseWaves = [];
+
+    let skills = {
+        laser: { lv: 1, timer: 0, interval: 15, name: "拡散レーザー" },
+        missile: { lv: 0, timer: 0, interval: 80, name: "追尾ミサイル" },
+        pulse: { lv: 0, timer: 0, interval: 200, name: "衝撃波シールド" }
+    };
+
+    const upgradeOptions = [
+        { id: 'laser', name: "レーザー連射", desc: "速度と弾を強化します", action: () => { skills.laser.interval = Math.max(4, skills.laser.interval - 2); skills.laser.lv++; } },
+        { id: 'missile', name: "ミサイル強化", desc: "弾数と追尾性能を上げます", action: () => { skills.missile.lv++; skills.missile.interval = Math.max(30, skills.missile.interval - 5); } },
+        { id: 'pulse', name: "シールド拡張", desc: "範囲とリロードを強化します", action: () => { skills.pulse.lv++; skills.pulse.interval = Math.max(60, skills.pulse.interval - 20); } },
+        { id: 'repair', name: "フルリペア", desc: "最大HP+5 & 全回復", action: () => { player.maxHp += 5; player.hp = player.maxHp; } }
+    ];
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight - 60;
+        if(!gameActive) { player.x = canvas.width / 2; player.y = canvas.height * 0.8; enemy.x = canvas.width / 2; enemy.y = 100; }
+    }
+    window.addEventListener('resize', resize); resize();
+
+    function formatTime(f) {
+        const s = Math.floor(f / 60);
+        return `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
+    }
+
+    // 操作系
+    let isPointerDown = false, lastX = 0, lastY = 0;
+    const move = (x, y) => {
+        if (!gameActive || !isPointerDown) return;
+        player.x = Math.max(20, Math.min(canvas.width - 20, player.x + (x - lastX)));
+        player.y = Math.max(20, Math.min(canvas.height - 20, player.y + (y - lastY)));
+        lastX = x; lastY = y;
+    };
+    canvas.addEventListener('touchstart', e => { isPointerDown = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; }, {passive: false});
+    canvas.addEventListener('touchmove', e => { move(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }, {passive: false});
+    canvas.addEventListener('touchend', () => isPointerDown = false);
+    canvas.addEventListener('mousedown', e => { isPointerDown = true; lastX = e.clientX; lastY = e.clientY; });
+    window.addEventListener('mousemove', e => move(e.clientX, e.clientY));
+    window.addEventListener('mouseup', () => isPointerDown = false);
+
+    function startGame() { document.getElementById('start-overlay').style.display = 'none'; resize(); gameActive = true; updateSkillLog(); loop(); }
+
+    function loop() {
+        if (!gameActive) return;
+        ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        frame++;
+        let diff = 1 + (frame / 10000) + (wave - 1) * 0.5;
+
+        // ボス移動
+        if (!enemy.isExploding) {
+            enemy.moveTimer--;
+            if (enemy.moveTimer <= 0) {
+                enemy.targetX = 50 + Math.random() * (canvas.width - 100);
+                enemy.targetY = 50 + Math.random() * 180;
+                enemy.moveTimer = 100;
+            }
+            enemy.x += (enemy.targetX - enemy.x) * 0.05; enemy.y += (enemy.targetY - enemy.y) * 0.05;
+
+            // 弾幕
+            spiralAngle += 0.05; 
+            if (frame % Math.max(2, Math.floor(10/diff)) === 0) {
+                let count = Math.min(10, Math.max(1, Math.floor(diff)));
+                for (let i = 0; i < count; i++) {
+                    const a = spiralAngle + (i * Math.PI * 2 / count);
+                    enemyBullets.push({ x: enemy.x, y: enemy.y, vx: Math.cos(a)*3, vy: Math.sin(a)*3, r: 5 });
+                }
+            }
+        }
+
+        // スキル実行
+        if (frame % skills.laser.interval === 0) bullets.push({ x: player.x, y: player.y, vx: 0, vy: -15, r: 4, type: 'laser' });
+        
+        if (skills.missile.lv > 0 && frame % skills.missile.interval === 0) {
+            const count = Math.min(10, skills.missile.lv);
+            for(let i=0; i<count; i++) {
+                const spread = (i - (count-1)/2) * 15;
+                bullets.push({ x: player.x + spread, y: player.y, vx: spread/5, vy: -6, r: 6, type: 'missile' });
+            }
+        }
+
+        if (skills.pulse.lv > 0 && frame % skills.pulse.interval === 0) {
+            pulseWaves.push({ x: player.x, y: player.y, r: 0, alpha: 1, maxR: 120 + (skills.pulse.lv * 40) });
+        }
+
+        // 衝撃波処理
+        pulseWaves.forEach((w, i) => {
+            w.r += 10; w.alpha -= 0.02;
+            enemyBullets.forEach((eb, j) => { if (Math.hypot(eb.x-w.x, eb.y-w.y) < w.r) { expOrbs.push({x: eb.x, y: eb.y}); enemyBullets.splice(j, 1); } });
+            ctx.strokeStyle = `rgba(0, 255, 157, ${w.alpha})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(w.x, w.y, w.r, 0, Math.PI*2); ctx.stroke();
+            if (w.alpha <= 0 || w.r > w.maxR) pulseWaves.splice(i, 1);
+        });
+
+        // 自機弾 & 衝突
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            let b = bullets[i]; b.x += b.vx; b.y += b.vy;
+            if (b.type === 'missile') {
+                let a = Math.atan2(enemy.y - b.y, enemy.x - b.x);
+                b.vx += Math.cos(a)*1.8; b.vy += Math.sin(a)*1.8; b.vx *= 0.9; b.vy *= 0.9;
+            }
+            if (!enemy.isExploding && Math.hypot(b.x - enemy.x, b.y - enemy.y) < 45) {
+                enemy.hp -= 10; bullets.splice(i, 1);
+                if (enemy.hp <= 0) { enemy.isExploding = true; setTimeout(() => { wave++; enemy.maxHp += 500; enemy.hp = enemy.maxHp; enemy.isExploding = false; }, 2000); }
+                continue;
+            }
+            for (let j = enemyBullets.length - 1; j >= 0; j--) {
+                if (Math.hypot(b.x - enemyBullets[j].x, b.y - enemyBullets[j].y) < 20) {
+                    expOrbs.push({x: enemyBullets[j].x, y: enemyBullets[j].y}); 
+                    enemyBullets.splice(j, 1); bullets.splice(i, 1); break;
+                }
+            }
+            if (bullets[i]) {
+                ctx.fillStyle = b.type === 'laser' ? "#00ff9d" : "#ffcc00";
+                ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill();
+                if (b.y < -50 || b.y > canvas.height + 50) bullets.splice(i, 1);
+            }
+        }
+
+        // 敵弾 & 被弾
+        enemyBullets.forEach((eb, i) => {
+            eb.x += eb.vx; eb.y += eb.vy;
+            ctx.fillStyle = "#ff00ff"; ctx.beginPath(); ctx.arc(eb.x, eb.y, eb.r, 0, Math.PI*2); ctx.fill();
+            if (Math.hypot(eb.x-player.x, eb.y-player.y) < 12 && player.invul <= 0) { player.hp--; player.invul = 60; }
+        });
+
+        // 経験値
+        expOrbs.forEach((orb, i) => {
+            let d = Math.hypot(player.x-orb.x, player.y-orb.y);
+            if (d < 250) { orb.x += (player.x-orb.x)*0.15; orb.y += (player.y-orb.y)*0.15; }
+            ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(orb.x, orb.y, 2, 0, Math.PI*2); ctx.fill();
+            if (d < 15) { player.xp += 5; expOrbs.splice(i, 1); if(player.xp >= player.nextXp) levelUp(); }
+        });
+
+        // 描画：ボス & プレイヤー
+        if (!enemy.isExploding) {
+            ctx.strokeStyle = "#ff00ff"; ctx.lineWidth = 4; ctx.strokeRect(enemy.x-30, enemy.y-30, 60, 60);
+        }
+        if (player.invul % 4 < 2) {
+            ctx.fillStyle = "#00f3ff"; ctx.beginPath(); ctx.moveTo(player.x, player.y-18); ctx.lineTo(player.x-15, player.y+12); ctx.lineTo(player.x+15, player.y+12); ctx.fill();
+        }
+
+        updateUI();
+        if (player.invul > 0) player.invul--;
+        if (player.hp <= 0) endGame();
+        if (gameActive) requestAnimationFrame(loop);
+    }
+
+    function levelUp() {
+        gameActive = false; player.lv++; player.xp = 0; player.nextXp = Math.floor(player.nextXp * 1.5);
+        const choices = document.getElementById('upgrade-choices'); choices.innerHTML = '';
+        [...upgradeOptions].sort(()=>0.5-Math.random()).slice(0,3).forEach(opt => {
+            const card = document.createElement('div'); card.className = 'upgrade-card';
+            card.innerHTML = `<div style="color:var(--neon-green); font-weight:bold;">${opt.name}</div><div style="font-size:12px; opacity:0.8;">${opt.desc}</div>`;
+            card.onclick = () => { opt.action(); gameActive = true; updateSkillLog(); document.getElementById('level-up-overlay').style.display='none'; loop(); };
+            choices.appendChild(card);
+        });
+        document.getElementById('level-up-overlay').style.display = 'flex';
+    }
+
+    function updateUI() {
+        document.getElementById('hp-val').innerText = `${player.hp}/${player.maxHp}`;
+        document.getElementById('lv-val').innerText = player.lv;
+        document.getElementById('time-val').innerText = formatTime(frame);
+        document.getElementById('xp-fill').style.width = Math.min(100, (player.xp/player.nextXp*100))+'%';
+        document.getElementById('boss-hp-fill').style.width = Math.max(0, (enemy.hp / enemy.maxHp) * 100) + '%';
+    }
+
+    function updateSkillLog() { document.getElementById('active-skills-list').innerHTML = Object.keys(skills).filter(k => skills[k].lv > 0 || k === 'laser').map(k => `${skills[k].name} Lv.${skills[k].lv || 1}`).join(' | '); }
+
+    function endGame() { gameActive = false; document.getElementById('final-time').innerText = formatTime(frame); document.getElementById('game-over-overlay').style.display = 'flex'; }
+</script>
+</body>
+</html>
